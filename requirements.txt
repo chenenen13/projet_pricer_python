@@ -1,4 +1,6 @@
-numpy>=1.23
-pandas>=2.0
-scipy>=1.10
-streamlit>=1.30
+streamlit
+numpy
+pandas
+matplotlib
+scipy
+scikit-learn
