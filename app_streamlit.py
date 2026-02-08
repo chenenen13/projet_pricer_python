@@ -33,6 +33,11 @@ from etudes_convergence import (
     plot_scaled_error_vs_N,
 )
 
+# Runtime study
+from etudes_runtime import (
+    study_runtime_vs_N,
+    plot_runtime_analysis,
+)
 
 st.set_page_config(page_title="MC & LSM Pricer", layout="wide")
 
@@ -166,7 +171,7 @@ with st.sidebar:
 market = Market(r=float(r), q=float(q))
 model = GBMModel(market, GBMParams(s0=float(s0), sigma=float(sigma)))
 
-tabs = st.tabs(["Pricing", "Convergence", "LSM Diagnostics"])
+tabs = st.tabs(["Pricing", "Convergence", "Runtime analysis", "LSM Diagnostics"])
 
 
 # =====================================================================
@@ -589,11 +594,104 @@ with tabs[1]:
             fig_scaled = plot_scaled_error_vs_N(resN)
             st.pyplot(fig_scaled, clear_figure=True, use_container_width=True)
 
+# =====================================================================
+# TAB 3 — Runtime analysis (Vectorized vs Scalar) + Price vs N + BS line
+# =====================================================================
+with tabs[2]:
+    st.subheader("Runtime analysis")
+    st.caption(
+        "Mesure du temps d'exécution en fonction de N (axe gauche) "
+        "et prix estimé en fonction de N (axe droit), avec une ligne BS fixe. "
+        "Axe X en log."
+    )
+
+    # European option/pricer for runtime study
+    option_eu = EuropeanOption(
+        option_type=_opt_enum(callput_str),
+        strike=float(K),
+        pricing_date=pricing_date,
+        maturity_date=maturity_date,
+        day_count=day_count,
+    )
+    pricer_eu = EuropeanMCPricer(model)
+
+    bs = black_scholes_price(
+        S0=float(s0),
+        K=float(K),
+        T=float(option_eu.T),
+        r=float(r),
+        q=float(q),
+        sigma=float(sigma),
+        opt_type=_opt_enum(callput_str),
+    )
+
+    st.markdown("### Parameters (N grid + scalar cap)")
+
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    with c1:
+        rt_N_max = st.number_input("N max", value=1_000_000, step=100_000, min_value=1, key="rt_N_max")
+    with c2:
+        rt_step = st.number_input("ΔN step", value=50_000, step=10_000, min_value=1, key="rt_step")
+    with c3:
+        rt_N_start = st.number_input("N start (can be 0)", value=0, step=10_000, min_value=0, key="rt_N_start")
+    with c4:
+        rt_seed = st.number_input("seed", value=int(seed), step=1, key="rt_seed")
+
+    c5, c6 = st.columns([1, 1])
+    with c5:
+        rt_scalar_cap = st.number_input("Scalar cap (max paths for scalar)", value=int(scalar_cap), step=10_000, key="rt_scalar_cap")
+    with c6:
+        rt_scalar_scaled = st.checkbox(
+            "Scale scalar runtime to N (assume linear in N)",
+            value=True,
+            key="rt_scalar_scaled",
+        )
+
+    N_grid_rt = _build_N_grid_from_max_step(N_max=int(rt_N_max), step=int(rt_step), N_start=int(rt_N_start))
+    if len(N_grid_rt) > 0:
+        st.caption(f"N grid generated: {len(N_grid_rt)} points (from {N_grid_rt[0]:,} to {N_grid_rt[-1]:,}).")
+    else:
+        st.caption("N grid generated: 0 points (check N max / ΔN).")
+
+    run_rt = st.button("Run runtime analysis", key="btn_runtime_analysis")
+
+    if run_rt:
+        if len(N_grid_rt) == 0:
+            st.error("N grid is empty. Increase N max or decrease ΔN.")
+        else:
+            with st.spinner("Running runtime study (this may take time for large N)..."):
+                rt_res = study_runtime_vs_N(
+                    pricer=pricer_eu,
+                    option=option_eu,
+                    N_grid=N_grid_rt,
+                    bs_price=float(bs),
+                    seed=int(rt_seed),
+                    antithetic=bool(antithetic),
+                    scalar_cap=int(rt_scalar_cap),
+                    scalar_scaled=bool(rt_scalar_scaled),
+                )
+
+            st.info(f"Black–Scholes (fixed): **{bs:.6f}**")
+
+            # Show table
+            df_rt = rt_res.df.copy()
+            st.dataframe(df_rt, use_container_width=True)
+
+            # Plot
+            fig = plot_runtime_analysis(rt_res)
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+
+            if rt_scalar_scaled:
+                st.warning(
+                    "Scalar runtime is measured at min(N, scalar_cap) then scaled linearly to N. "
+                    "Prices shown for scalar are computed at n_scalar_used (not at full N)."
+                )
+
 
 # =====================================================================
 # TAB 3 — LSM Diagnostics (sweep n_steps)
 # =====================================================================
-with tabs[2]:
+with tabs[3]:
     st.subheader("LSM Diagnostics")
     st.caption("Visualiser l'impact du grid (n_steps) + diagnostics régression (R², ITM).")
 
